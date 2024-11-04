@@ -617,7 +617,51 @@ public:
         return foundNumeric ? maxValue : 0;  // Return 0 if no numeric values were found
     }
 
+    std::vector<std::vector<std::string>> filterRows(const std::string& columnName, const std::string& op, const std::string& value){
+        std::lock_guard<std::mutex> lock(tableMutex);
 
+        size_t columnIndex = -1;
+        for(size_t i = 0; i< columns.size(); i++){
+            if(columns[i] == columnName){
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if(columnIndex == -1){
+            std::cout << "Error: Column '" << columnName << "' not found" << std::endl;
+            return {};
+        }
+
+        // Vector to store filtered rows
+        std::vector<std::vector<std::string>> result;
+
+        for(const auto& row : rows){
+            bool conditionMet = false;
+            try {
+                // convert the row data and filters value to double if it's a numeric comparison
+                double rowValue = std::stod(row[columnIndex]);
+                double filterValue = std::stod(value);
+
+                if(op == "==") conditionMet = (rowValue == filterValue);
+                else if (op == "!=") conditionMet = (rowValue != filterValue);
+                else if (op == "<") conditionMet = (rowValue < filterValue);
+                else if (op == ">") conditionMet = (rowValue > filterValue);
+                else if (op == "<=") conditionMet = (rowValue <= filterValue);
+                else if (op == ">=") conditionMet = (rowValue >= filterValue);
+            } catch (const std::invalid_argument&) {
+                // Handle string comparisons
+                if (op == "==") conditionMet = (row[columnIndex] == value);
+                else if (op == "!=") conditionMet = (row[columnIndex] != value);
+            }
+
+             // If the condition is met, add the row to the result
+            if (conditionMet) {
+                result.push_back(row);
+            }
+        }
+        return result;
+    }
 };
 
 
@@ -649,14 +693,47 @@ int main() {
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
 
+    // filters starts
+
+    // Test case 1: Filter rows where Age > 20
+    std::cout << "\nFilter: Age > 20" << std::endl;
+    std::vector<std::vector<std::string>> result = studentTable.filterRows("Age", ">", "20");
+    for (const auto& row : result) {
+        for (const auto& data : row) {
+            std::cout << data << "\t";
+        }
+        std::cout << std::endl;
+    }
+
+    // Test case 2: Filter rows where Age == 19
+    std::cout << "\nFilter: Age == 19" << std::endl;
+    result = studentTable.filterRows("Age", "==", "19");
+    for (const auto& row : result) {
+        for (const auto& data : row) {
+            std::cout << data << "\t";
+        }
+        std::cout << std::endl;
+    }
+
+    // Test case 3: Filter rows where Name == "Alice"
+    std::cout << "\nFilter: Name == 'Alice'" << std::endl;
+    result = studentTable.filterRows("Name", "==", "Alice");
+    for (const auto& row : result) {
+        for (const auto& data : row) {
+            std::cout << data << "\t";
+        }
+        std::cout << std::endl;
+    }
+    // filters end
+
     // aggretation start
 
     // Calculate and display the sum, average, min, and max of the "Age" column
-    std::cout << "\nAggregations on 'Age' column:" << std::endl;
-    std::cout << "Sum: " << studentTable.sumColumn("Age") << std::endl;
-    std::cout << "Average: " << studentTable.avgColumn("Age") << std::endl;
-    std::cout << "Min: " << studentTable.minColumn("Age") << std::endl;
-    std::cout << "Max: " << studentTable.maxColumn("Age") << std::endl;
+    // std::cout << "\nAggregations on 'Age' column:" << std::endl;
+    // std::cout << "Sum: " << studentTable.sumColumn("Age") << std::endl;
+    // std::cout << "Average: " << studentTable.avgColumn("Age") << std::endl;
+    // std::cout << "Min: " << studentTable.minColumn("Age") << std::endl;
+    // std::cout << "Max: " << studentTable.maxColumn("Age") << std::endl;
 
     // aggretation end
 
