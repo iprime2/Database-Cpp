@@ -109,7 +109,7 @@ public:
             return 0;
         }
 
-        return columnIndex;
+        return static_cast<int>(columnIndex); ;
     }
 
     std::vector<std::vector<std::string>> selectRows(const std::string& columnName, const std::string& value) {
@@ -148,7 +148,7 @@ public:
     }
 
     void updateRows(const std::string& columnName, const std::string& matchValue, const std::string& updateColumn, const std::string& newValue){
-         std::lock_guard<std::mutex> lock(tableMutex); 
+        std::lock_guard<std::mutex> lock(tableMutex); 
 
         size_t matchColumnIndex = -1;
         size_t updateColumnIndex = -1;
@@ -279,56 +279,50 @@ public:
         return rows.size();
     }
 
-    double sumColumn(const std::string& columnName){
-        int columnIndex = colunmFind(columnName);
+    // double sumColumn(const std::string& columnName){
+    //     int columnIndex = colunmFind(columnName);
+    //     double sum = 0;
+    //     for(const auto& row : rows){
+    //         try{
+    //             sum += std::stod(row[columnIndex]);
+    //         } catch (const std::invalid_argument) {
+    //             std::cout << "Skipping non-number value:" << row[columnIndex] << std::endl;
+    //         } 
+    //     }
+    //     return sum;
+    // }
 
-        double sum = 0;
-        for(const auto& row : rows){
-            try{
-                sum += std::stod(row[columnIndex]);
-            } catch (const std::invalid_argument) {
-                std::cout << "Skipping non-number value:" << row[columnIndex] << std::endl;
-            } 
-        }
+    // double minColumn(const std::string& columnName){
+    //     int columnIndex = colunmFind(columnName);
+    //     double minValue = std::numeric_limits<double>::max();
+    //     for(const auto& row : rows){
+    //         try{
+    //             double value = std::stod(row[columnIndex]);
+    //             if(value < minValue){
+    //                 minValue = value;
+    //             }
+    //         }catch (const std::invalid_argument) {
+    //             std::cout<< "Skipping non-numberic value: " << row[columnIndex] << std::endl;
+    //         }
+    //     }
+    //     return minValue;
+    // }
 
-        return sum;
-    }
-
-    double minColumn(const std::string& columnName){
-        int columnIndex = colunmFind(columnName);
-
-        double minValue = std::numeric_limits<double>::max();
-        for(const auto& row : rows){
-            try{
-                double value = std::stod(row[columnIndex]);
-                if(value < minValue){
-                    minValue = value;
-                }
-            }catch (const std::invalid_argument) {
-                std::cout<< "Skipping non-numberic value: " << row[columnIndex] << std::endl;
-            }
-        }
-
-        return minValue;
-    }
-
-    double maxColumn(const std::string& columnName) {
-        int columnIndex = colunmFind(columnName);
-
-        double maxValue = std::numeric_limits<double>::lowest();
-        for (const auto& row : rows) {
-            try {
-                double value = std::stod(row[columnIndex]);
-                if (value > maxValue) {
-                    maxValue = value;
-                }
-            } catch (const std::invalid_argument&) {
-                std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
-            }
-        }
-
-        return maxValue;
-    }
+    // double maxColumn(const std::string& columnName) {
+    //     int columnIndex = colunmFind(columnName);
+    //     double maxValue = std::numeric_limits<double>::lowest();
+    //     for (const auto& row : rows) {
+    //         try {
+    //             double value = std::stod(row[columnIndex]);
+    //             if (value > maxValue) {
+    //                 maxValue = value;
+    //             }
+    //         } catch (const std::invalid_argument&) {
+    //             std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
+    //         }
+    //     }
+    //     return maxValue;
+    // }
 
     double averageColumn(const std::string& columnName) {
         double sum = sumColumn(columnName);
@@ -437,7 +431,6 @@ public:
     // single col
     // void sortTable(const std::string& columnName, bool ascending = true){
     //     std::lock_guard<std::mutex> lock(tableMutex);
-
     //     //Find the index of the column to sort by
     //     size_t columnIndex  = 1;
     //     for(size_t i =0; i < columns.size(); i++){
@@ -446,12 +439,10 @@ public:
     //             break;
     //         }
     //     }
-
     //     if(columnIndex == -1){
     //         std::cout << "Error: Column '" << columnName <<"' not found." << std::endl;
     //         return;
     //     }
-
     //     // Sort the rows based on the selected column
     //     std::sort(rows.begin(), rows.end(), [columnIndex, ascending](const std::vector<std::string>& row1, const std::vector<std::string>& row2) {
     //         if (ascending) {
@@ -460,7 +451,6 @@ public:
     //             return row1[columnIndex] > row2[columnIndex];  // Descending order
     //         }
     //     });
-
     //     std::cout << "Table sorted by column '" << columnName << "' in " << (ascending ? "ascending" : "descending") << " order." << std::endl;
     // }
 
@@ -510,6 +500,124 @@ public:
         std::cout << std::endl;
     }
 
+    double sumColumn(const std::string& columnName){
+        std::lock_guard<std::mutex> lock(tableMutex);
+
+        size_t columnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == columnName) {
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << columnName << "' not found." << std::endl;
+            return 0;
+        }
+
+        double sum = 0.0;
+
+        for(const auto& row : rows){
+            try{
+                sum += std::stod(row[columnIndex]); // convert string to double and add to sum
+            } catch (const std::invalid_argument&) {
+                std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
+            }
+        }
+        return sum;
+    }
+
+    double avgColumn(const std::string& columnName) {
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        size_t columnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == columnName) {
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << columnName << "' not found." << std::endl;
+            return 0;
+        }
+
+        double sum = 0.0;
+        int count = 0;
+        for (const auto& row : rows) {
+            try {
+                sum += std::stod(row[columnIndex]);
+                count++;
+            } catch (const std::invalid_argument&) {
+                std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
+            }
+        }
+        return count == 0 ? 0 : sum / count;
+    }
+
+    double minColumn(const std::string& columnName) {
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        size_t columnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == columnName) {
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << columnName << "' not found." << std::endl;
+            return 0;
+        }
+
+        double minValue = std::numeric_limits<double>::max();
+        bool foundNumeric = false;
+        for (const auto& row : rows) {
+            try {
+                double value = std::stod(row[columnIndex]);
+                minValue = std::min(minValue, value);
+                foundNumeric = true;
+            } catch (const std::invalid_argument&) {
+                std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
+            }
+        }
+        return foundNumeric ? minValue : 0;  // Return 0 if no numeric values were found
+    }
+
+    double maxColumn(const std::string& columnName) {
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        size_t columnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == columnName) {
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << columnName << "' not found." << std::endl;
+            return 0;
+        }
+
+        double maxValue = std::numeric_limits<double>::lowest();
+        bool foundNumeric = false;
+        for (const auto& row : rows) {
+            try {
+                double value = std::stod(row[columnIndex]);
+                maxValue = std::max(maxValue, value);
+                foundNumeric = true;
+            } catch (const std::invalid_argument&) {
+                std::cout << "Skipping non-numeric value: " << row[columnIndex] << std::endl;
+            }
+        }
+        return foundNumeric ? maxValue : 0;  // Return 0 if no numeric values were found
+    }
+
+
 };
 
 
@@ -525,8 +633,8 @@ int main() {
     studentTable.addRow({"1", "Alice", "20"});
     studentTable.addRow({"2", "Bob", "22"});
     studentTable.addRow({"3", "Charlie", "19"});
-    studentTable.addRow({"4", "Dave", "20"});
-    studentTable.addRow({"5", "Eve", "19"});
+    studentTable.addRow({"4", "Dave", "25"});
+    studentTable.addRow({"5", "Eve", "invalid"});  
 
     // Save the table to a file
     studentTable.saveToFile("studentTable.txt");
@@ -541,10 +649,25 @@ int main() {
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
 
+    // aggretation start
+
+    // Calculate and display the sum, average, min, and max of the "Age" column
+    std::cout << "\nAggregations on 'Age' column:" << std::endl;
+    std::cout << "Sum: " << studentTable.sumColumn("Age") << std::endl;
+    std::cout << "Average: " << studentTable.avgColumn("Age") << std::endl;
+    std::cout << "Min: " << studentTable.minColumn("Age") << std::endl;
+    std::cout << "Max: " << studentTable.maxColumn("Age") << std::endl;
+
+    // aggretation end
+
+    // double sort start
+
     // Multi-column sort: Sort by 'Age' in ascending order, and then by 'Name' in descending order
-    std::cout << "\nSorting by 'Age' (ascending) and 'Name' (descending):" << std::endl;
-    studentTable.sortTable({"Name", "Age"}, {true, true});
-    studentTable.displayTable();
+    // std::cout << "\nSorting by 'Age' (ascending) and 'Name' (descending):" << std::endl;
+    // studentTable.sortTable({"Name", "Age"}, {true, true});
+    // studentTable.displayTable();
+
+    // double sort end
 
     // single sort start
 
