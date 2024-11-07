@@ -892,6 +892,54 @@ public:
         std::cout << "Table data successfully imported from " << filename << std::endl;
     }
 
+    std::vector<std::vector<std::string>> searchRows(const std::string& searchColumn, const std::string& op, const std::string& value){
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        // Find the index of the search column
+        size_t searchIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == searchColumn) {
+                searchIndex = i;
+                break;
+            }
+        }
+
+        if (searchIndex == -1) {
+            std::cout << "Error: Column '" << searchColumn << "' not found." << std::endl;
+            return {};
+        }
+
+        // Vector to store matching rows
+        std::vector<std::vector<std::string>> result;
+
+        // loop through each row and apply the search condition
+        for(const auto& row : rows){
+            bool conditionMet = false;
+            try {
+                // Convert values to double for numeric comparison
+                double rowValue = std::stod(row[searchIndex]);
+                double searchValue = std::stod(value);
+
+                if (op == "==") conditionMet = (rowValue == searchValue);
+                else if (op == "!=") conditionMet = (rowValue != searchValue);
+                else if (op == "<") conditionMet = (rowValue < searchValue);
+                else if (op == ">") conditionMet = (rowValue > searchValue);
+                else if (op == "<=") conditionMet = (rowValue <= searchValue);
+                else if (op == ">=") conditionMet = (rowValue >= searchValue);
+            } catch (const std::invalid_argument&) {
+                // Handle string comparison if values are non-numeric
+                if (op == "==") conditionMet = (row[searchIndex] == value);
+                else if (op == "!=") conditionMet = (row[searchIndex] != value);
+            }
+
+            // If the condition is met, add the row to the result
+            if (conditionMet) {
+                result.push_back(row);
+            }
+        }
+
+        return result;
+    }
 };
 
 
@@ -922,6 +970,28 @@ int main() {
     // Display the table loaded from the file
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
+
+    // search by rows select .... where start
+    // Test Case 1: Search rows where Age == "20"
+    std::cout << "\nSearching rows where Age == 20:" << std::endl;
+    std::vector<std::vector<std::string>> result = studentTable.searchRows("Age", "==", "20");
+    for (const auto& row : result) {
+        for (const auto& data : row) {
+            std::cout << data << "\t";
+        }
+        std::cout << std::endl;
+    }
+
+    // Test Case 2: Search rows where Name != "Alice"
+    std::cout << "\nSearching rows where Name != 'Alice':" << std::endl;
+    result = studentTable.searchRows("Name", "!=", "Alice");
+    for (const auto& row : result) {
+        for (const auto& data : row) {
+            std::cout << data << "\t";
+        }
+        std::cout << std::endl;
+    }
+    // search by rows select .... where end
 
     // import from csv start
     // std::string filename = "students.csv";
