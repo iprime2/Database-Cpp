@@ -10,6 +10,8 @@
 #include <thread>  
 #include <tuple>
 #include <functional>
+#include <map> 
+#include <numeric> 
 
 // Custom hash function for tuples
 struct TupleHasher {
@@ -149,10 +151,8 @@ public:
 
     void updateRows(const std::string& columnName, const std::string& matchValue, const std::string& updateColumn, const std::string& newValue){
         std::lock_guard<std::mutex> lock(tableMutex); 
-
         size_t matchColumnIndex = -1;
         size_t updateColumnIndex = -1;
-
         // checking and getting the index of columns
         for(size_t i = 0; i < columns.size(); i++){
             if(columns[i] == columnName){
@@ -162,20 +162,17 @@ public:
                 updateColumnIndex = i;
             }
         }
-
         // Check if both columns exist
         if (matchColumnIndex == -1 || updateColumnIndex == -1) {
             std::cout << "Error: Column not found." << std::endl;
             return;
         }
-
         // update columns
         for(auto& row: rows){
             if(row[matchColumnIndex] == matchValue){
                 row[updateColumnIndex] = newValue;
             }
         }
-
         std::cout << "Rows updated where " << columnName << " == " << matchValue << std::endl;
     }
 
@@ -662,6 +659,161 @@ public:
         }
         return result;
     }
+
+    std::map<std::string, double> groupedAggregation(const std::string& groupByColumn, const std::string& aggColumn, const std::string& aggType){
+    
+        // Find the indices of the columns
+        size_t groupByIndex = -1, aggColumnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == groupByColumn) groupByIndex = i;
+            if (columns[i] == aggColumn) aggColumnIndex = i;
+        }
+
+        if (groupByIndex == -1 || aggColumnIndex == -1) {
+            std::cout << "Error: Invalid column name(s)." << std::endl;
+            return {};
+        }
+
+        // Map to store the groups and aggregation values
+        std::map<std::string, std::vector<double>> groups;
+
+        // Group the rows based on the grouping column
+        for (const auto& row : rows){
+            const std::string& groupValue = row[groupByIndex];
+            // attempt to convert the aggregation column value to double
+            try{
+                double value = std::stod(row[aggColumnIndex]);
+                groups[groupValue].push_back(value); // add value to the group
+            } catch (const std::invalid_argument&){
+                std::cout << "Skipping non-numeric value in aggregation column: " << row[aggColumnIndex] << std::endl;
+            }
+        }
+
+        // Map to store the final aggregation result for each group
+        std::map<std::string, double> result;
+
+        // calculate the specified aggregation for each group
+        for(const auto& group : groups){
+            const std::string& groupKey = group.first;
+            const std::vector<double>& values = group.second;
+            double aggregationValue = 0.0;
+
+             if (aggType == "SUM") {
+                aggregationValue = std::accumulate(values.begin(), values.end(), 0.0);
+            } else if (aggType == "AVG") {
+                aggregationValue = values.empty() ? 0 : std::accumulate(values.begin(), values.end(), 0.0) / values.size();
+            } else if (aggType == "MIN") {
+                aggregationValue = *std::min_element(values.begin(), values.end());
+            } else if (aggType == "MAX") {
+                aggregationValue = *std::max_element(values.begin(), values.end());
+            } else {
+                std::cout << "Error: Invalid aggregation type." << std::endl;
+                return {};
+            }
+
+            result[groupKey] = aggregationValue;
+        }
+
+        return result;
+    }
+
+    void conditionUpdateRow(const std::string& targetColumn, const std::string& newValue, const std::string& conditionColumn, const std::string& op, const std::string& conditionValue){
+        // Find indices of the target and condition columns
+        size_t targetIndex = -1, conditionIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == targetColumn) targetIndex = i;
+            if (columns[i] == conditionColumn) conditionIndex = i;
+        }
+
+        if (targetIndex == -1 || conditionIndex == -1) {
+            std::cout << "Error: Column not found." << std::endl;
+            return;
+        }
+
+        // update rows that match the condition
+        for(auto& row : rows){
+            bool conditionMet = false;
+            try
+            {
+                // Try to convert the condition value and the row value to double for numeric comparison
+                double rowValue = std::stod(row[conditionIndex]);
+                double condValue = std::stod(conditionValue);
+
+                if (op == "==") conditionMet = (rowValue == condValue);
+                else if (op == "!=") conditionMet = (rowValue != condValue);
+                else if (op == "<") conditionMet = (rowValue < condValue);
+                else if (op == ">") conditionMet = (rowValue > condValue);
+                else if (op == "<=") conditionMet = (rowValue <= condValue);
+                else if (op == ">=") conditionMet = (rowValue >= condValue);
+
+            }
+            catch(const std::invalid_argument&)
+            {
+                // Handle string comparison if values are non-numeric
+                if (op == "==") conditionMet = (row[conditionIndex] == conditionValue);
+                else if (op == "!=") conditionMet = (row[conditionIndex] != conditionValue);
+            }
+
+            if(conditionMet){
+                row[targetIndex] = newValue;
+                std::cout<< "Updated row: ";
+                for(const auto& value : row){
+                    std::cout<<value<<"\t";
+                }  
+                std::cout << std::endl;
+            }
+        }
+    }
+
+    void conditionDeleteRow(const std::string& conditionColumn, const std::string& op, const std::string& conditionValue){
+        // Find the index of the condition column
+        size_t conditionIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == conditionColumn) {
+                conditionIndex = i;
+                break;
+            }
+        }
+
+        if (conditionIndex == -1) {
+            std::cout << "Error: Column '" << conditionColumn << "' not found." << std::endl;
+            return;
+        }
+
+        for(auto it = rows.begin(); it!=rows.end();){
+            bool conditionMet = false;
+            try
+            {
+                // Try to convert the condition value and the row value to double for numeric comparison
+                double rowValue = std::stod((*it)[conditionIndex]);
+                double condValue = std::stod(conditionValue);
+
+                if (op == "==") conditionMet = (rowValue == condValue);
+                else if (op == "!=") conditionMet = (rowValue != condValue);
+                else if (op == "<") conditionMet = (rowValue < condValue);
+                else if (op == ">") conditionMet = (rowValue > condValue);
+                else if (op == "<=") conditionMet = (rowValue <= condValue);
+                else if (op == ">=") conditionMet = (rowValue >= condValue);
+            } catch (const std::invalid_argument&) {
+                // Handle string comparison if values are non-numeric
+                if (op == "==") conditionMet = ((*it)[conditionIndex] == conditionValue);
+                else if (op == "!=") conditionMet = ((*it)[conditionIndex] != conditionValue);
+            }
+
+            // If the condition is met, delete the row and move the iterator to the next element
+            if(conditionMet) {
+                std::cout << "Deleting row: ";
+                for(const auto& value : *it){
+                    std::cout << value << "\t";
+                }
+                std::cout << std::endl;
+                it = rows.erase(it);
+            }else {
+              ++it;  
+            }
+            
+        }
+    }
 };
 
 
@@ -693,37 +845,81 @@ int main() {
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
 
+    // delte by conition start
+    // Test Case 1: Delete rows where Age == "20"
+    std::cout << "\nDeleting rows where Age == 20:" << std::endl;
+    studentTable.conditionDeleteRow("Age", "==", "20");
+    studentTable.displayTable();
+
+    // Test Case 2: Delete rows where Name == "Bob"
+    std::cout << "\nDeleting rows where Name == 'Bob':" << std::endl;
+    studentTable.conditionDeleteRow("Name", "==", "Bob");
+    studentTable.displayTable();
+    // delte by conition end
+
+    // update by condition start
+    // Test Case 1: Update Age to "21" where Age == "20"
+    // std::cout << "\nUpdating Age to '21' where Age == 20:" << std::endl;
+    // studentTable.conditionUpdateRow("Age", "21", "Age", "==", "20");
+    // studentTable.displayTable();
+
+    // // Test Case 2: Update Name to "UpdatedName" where ID == "3"
+    // std::cout << "\nUpdating Name to 'UpdatedName' where ID == 3:" << std::endl;
+    // studentTable.conditionUpdateRow("Name", "UpdatedName", "ID", "==", "3");
+    // studentTable.displayTable();
+    // update by conditio end
+
+    // group by start
+    
+    // Group by "Name" and calculate the average "Age" for each name
+    // std::cout << "\nGrouped Aggregation: AVG Age by Name" << std::endl;
+    // std::map<std::string, double> avgResult = studentTable.groupedAggregation("Name", "Age", "AVG");
+
+    // for (const auto& [name, avgAge] : avgResult) {
+    //     std::cout << "Name: " << name << ", AVG Age: " << avgAge << std::endl;
+    // }
+
+    // // Group by "Name" and calculate the SUM of "Age" for each name
+    // std::cout << "\nGrouped Aggregation: SUM Age by Name" << std::endl;
+    // std::map<std::string, double> sumResult = studentTable.groupedAggregation("Name", "Age", "SUM");
+
+    // for (const auto& [name, sumAge] : sumResult) {
+    //     std::cout << "Name: " << name << ", SUM Age: " << sumAge << std::endl;
+    // }
+
+    // group by end
+
     // filters starts
 
     // Test case 1: Filter rows where Age > 20
-    std::cout << "\nFilter: Age > 20" << std::endl;
-    std::vector<std::vector<std::string>> result = studentTable.filterRows("Age", ">", "20");
-    for (const auto& row : result) {
-        for (const auto& data : row) {
-            std::cout << data << "\t";
-        }
-        std::cout << std::endl;
-    }
+    // std::cout << "\nFilter: Age > 20" << std::endl;
+    // std::vector<std::vector<std::string>> result = studentTable.filterRows("Age", ">", "20");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
 
-    // Test case 2: Filter rows where Age == 19
-    std::cout << "\nFilter: Age == 19" << std::endl;
-    result = studentTable.filterRows("Age", "==", "19");
-    for (const auto& row : result) {
-        for (const auto& data : row) {
-            std::cout << data << "\t";
-        }
-        std::cout << std::endl;
-    }
+    // // Test case 2: Filter rows where Age == 19
+    // std::cout << "\nFilter: Age == 19" << std::endl;
+    // result = studentTable.filterRows("Age", "==", "19");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
 
-    // Test case 3: Filter rows where Name == "Alice"
-    std::cout << "\nFilter: Name == 'Alice'" << std::endl;
-    result = studentTable.filterRows("Name", "==", "Alice");
-    for (const auto& row : result) {
-        for (const auto& data : row) {
-            std::cout << data << "\t";
-        }
-        std::cout << std::endl;
-    }
+    // // Test case 3: Filter rows where Name == "Alice"
+    // std::cout << "\nFilter: Name == 'Alice'" << std::endl;
+    // result = studentTable.filterRows("Name", "==", "Alice");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
     // filters end
 
     // aggretation start
@@ -926,6 +1122,9 @@ int main() {
     // }
 
     // multi col index end
+
+    // Save the table to a file
+    studentTable.saveToFile("studentTable.txt");
 
     return 0;
 };
