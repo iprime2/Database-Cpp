@@ -12,7 +12,6 @@
 #include <functional>
 #include <map> 
 #include <numeric> 
-#include <fstream> 
 
 // Custom hash function for tuples
 struct TupleHasher {
@@ -816,7 +815,7 @@ public:
         }
     }
 
-     void exportToCSV(const std::string& fileName){
+    void exportToCSV(const std::string& fileName){
         std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
 
         // open the file for writing 
@@ -845,6 +844,54 @@ public:
         std::cout << "Table data successfully exported to " << fileName << std::endl;
     }
     
+    void importFromCSV(const std::string& filename, bool clearExisingData = true){
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        // open file for reading
+        std::ifstream inFile(filename);
+        if(!inFile.is_open()){
+            std::cout << "Error: Could not open file " << filename << " for reading." << std::endl;
+            return;
+        }
+
+        if(clearExisingData){
+            columns.clear();
+            rows.clear();
+        }
+
+        std::string line;
+
+        // Read the column headers (first row of csv)
+        if(std::getline(inFile, line)){
+            std::stringstream ss(line);
+            std::string column;
+            while(std::getline(ss, column, ',')){
+                columns.push_back(column);
+            }
+        }
+
+        // Read each row of data        
+        while (std::getline(inFile, line)){
+            std::stringstream ss(line);
+            std::string value;
+            std::vector<std::string> row;
+
+            while (std::getline(ss, value, ',')){
+                row.push_back(value);
+            }
+
+            // Ensure the row has the correcty number of columns
+            if(row.size() == columns.size()){
+                rows.push_back(row);
+            } else {
+                std::cout << "Warning: Row has incorrect number of columns and will be skipped." << std::endl;
+            }
+
+        }
+        inFile.close();  // Close the file
+        std::cout << "Table data successfully imported from " << filename << std::endl;
+    }
+
 };
 
 
@@ -876,10 +923,20 @@ int main() {
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
 
+    // import from csv start
+    // std::string filename = "students.csv";
+    // std::cout << "\nImporting table data from " << filename << std::endl;
+    // studentTable.importFromCSV(filename);
+
+    // // Display the table after import
+    // std::cout << "\nTable contents after import:" << std::endl;
+    // studentTable.displayTable();
+    // import from csv end
+
     // export to csv start
-    std::string filename = "students.csv";
-    std::cout << "\nExporting table to " << filename << std::endl;
-    studentTable.exportToCSV(filename);
+    // std::string filename = "students.csv";
+    // std::cout << "\nExporting table to " << filename << std::endl;
+    // studentTable.exportToCSV(filename);
     // export to csv end
 
     // delete by conition start
