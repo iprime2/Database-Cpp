@@ -12,6 +12,7 @@
 #include <functional>
 #include <map> 
 #include <numeric> 
+#include <fstream> 
 
 // Custom hash function for tuples
 struct TupleHasher {
@@ -814,6 +815,36 @@ public:
             
         }
     }
+
+     void exportToCSV(const std::string& fileName){
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
+        // open the file for writing 
+        std::ofstream outFile(fileName);
+        if(!outFile.is_open()){
+            std::cout << "Error: Could not open file " << fileName << " for writing." << std::endl;
+            return;
+        }
+
+        for(size_t i = 0; i < columns.size(); i++){
+            outFile << columns[i];
+            if(i < columns.size() -1) outFile << "," ; // Add comma between columns
+        }
+        outFile << "\n"; // Newline after headers
+
+        // write each row
+        for(const auto& row : rows){
+            for(size_t i = 0; i < row.size(); ++i){
+                outFile << row[i];
+                if(i < row.size() - 1) outFile << ","; // Add comma between columns
+            }
+            outFile << "\n";
+        }
+
+        outFile.close();
+        std::cout << "Table data successfully exported to " << fileName << std::endl;
+    }
+    
 };
 
 
@@ -845,16 +876,22 @@ int main() {
     std::cout << "Initial table:" << std::endl;
     newStudentTable.displayTable();
 
-    // delte by conition start
-    // Test Case 1: Delete rows where Age == "20"
-    std::cout << "\nDeleting rows where Age == 20:" << std::endl;
-    studentTable.conditionDeleteRow("Age", "==", "20");
-    studentTable.displayTable();
+    // export to csv start
+    std::string filename = "students.csv";
+    std::cout << "\nExporting table to " << filename << std::endl;
+    studentTable.exportToCSV(filename);
+    // export to csv end
 
-    // Test Case 2: Delete rows where Name == "Bob"
-    std::cout << "\nDeleting rows where Name == 'Bob':" << std::endl;
-    studentTable.conditionDeleteRow("Name", "==", "Bob");
-    studentTable.displayTable();
+    // delete by conition start
+    // Test Case 1: Delete rows where Age == "20"
+    // std::cout << "\nDeleting rows where Age == 20:" << std::endl;
+    // studentTable.conditionDeleteRow("Age", "==", "20");
+    // studentTable.displayTable();
+
+    // // Test Case 2: Delete rows where Name == "Bob"
+    // std::cout << "\nDeleting rows where Name == 'Bob':" << std::endl;
+    // studentTable.conditionDeleteRow("Name", "==", "Bob");
+    // studentTable.displayTable();
     // delte by conition end
 
     // update by condition start
