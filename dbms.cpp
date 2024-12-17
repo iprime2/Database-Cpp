@@ -12,6 +12,7 @@
 #include <functional>
 #include <map> 
 #include <numeric> 
+#include <regex>  
 
 // Custom hash function for tuples
 struct TupleHasher {
@@ -23,10 +24,58 @@ struct TupleHasher {
     }
 };
 
+struct Condition {
+    std::string column;
+    std::string op;
+    std::string value;
+    std::vector<Condition> subconditions;
+    std::string logicalOp;
+
+    bool isGroup;
+
+    Condition() : isGroup(false){}
+}; 
+
+struct OrderBy {
+    std::string column; // Column to sort on
+    bool ascending;     // true = ASC, false = DESC
+};
+
+struct ConditionGroup {
+    std::vector<Condition> conditions;
+    std::string logicalOp;  // "AND" or "OR" applied within this group
+    std::vector<ConditionGroup> subgroups;
+};
+
+struct Index {
+    std::string column;
+    std::unordered_map<std::string, std::vector<size_t>> indexMap;
+};
+
+enum class DataType {
+    INTEGER,
+    STRING,
+    DATE
+};
+
+class Transaction {
+public:
+    std::vector<std::vector<std::string>> inserts;
+    std::vector<std::pair<size_t, std::vector<std::string>>> updates;  // (row index, new data)
+    std::vector<size_t> deletes;  // Row indices
+
+    void clear() {
+        inserts.clear();
+        updates.clear();
+        deletes.clear();
+    }
+};
+
 class Table {
 private:
     std::string tableName;
     std::vector<std::string> columns;
+    std::vector<DataType> columnTypes; // store data type of each column
     std::vector<std::vector<std::string>> rows;
 
     std::unordered_map<std::string, size_t> index;
@@ -37,17 +86,19 @@ private:
 
     // Lock for concurrency control
     std::mutex tableMutex;
+    std::vector<Index> indexes;
+    std::vector<Transaction> transactions; 
 
 public:
     //constructor
-    Table(const std::string& name, const std::vector<std::string>& cols)
-        : tableName(name), columns(cols) {
+    Table(const std::string& name, const std::vector<std::string>& colNames, const std::vector<DataType>& colTypes): tableName(name), columns(colNames), columnTypes(colTypes) {
         std::cout << "Table '" << tableName << "' created with columns: ";
         for (const auto& col : columns) {
             std::cout << col << " ";
         }
         std::cout << std::endl;
     }
+
 
     // Add a row of data
     void addRow(std::vector<std::string> rowData) {
@@ -56,6 +107,13 @@ public:
         if (rowData.size() != columns.size()) {
             std::cout << "Error: Row size (" << rowData.size() << ") does not match the number of columns (" << columns.size() << ")." << std::endl;
             return;
+        }
+
+        for(size_t i = 0; i < rowData.size(); ++i){
+            if(!isValidDataType(rowData[i], columnTypes[i])){
+                std::cout << "Error: Invalid data type for column '" << columns[i] << "'." << std::endl;
+                return;
+            }
         }
 
         rows.push_back(rowData);  // Add row to the table
@@ -326,17 +384,6 @@ public:
         size_t count = countRows();
         return (count > 0) ? sum / count : 0;
     }
-
-    // transaction methods
-    void beginTransaction(){
-        if (inTransaction) {
-            std::cout << "Transaction already in progress!" << std::endl;
-            return;
-        }
-        inTransaction = true;
-        transactionBackup = rows;  // Backup the current rows for rollback
-        std::cout << "Transaction started." << std::endl;
-    };
 
     void commit(){
         if(!inTransaction){
@@ -892,53 +939,375 @@ public:
         std::cout << "Table data successfully imported from " << filename << std::endl;
     }
 
-    std::vector<std::vector<std::string>> searchRows(const std::string& searchColumn, const std::string& op, const std::string& value){
-        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+    // single condtion
+    // std::vector<std::vector<std::string>> searchRows(const std::string& searchColumn, const std::string& op, const std::string& value){
+        // std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+        // // Find the index of the search column
+        // size_t searchIndex = -1;
+        // for (size_t i = 0; i < columns.size(); i++) {
+        //     if (columns[i] == searchColumn) {
+        //         searchIndex = i;
+        //         break;
+        //     }
+        // }
+        // if (searchIndex == -1) {
+        //     std::cout << "Error: Column '" << searchColumn << "' not found." << std::endl;
+        //     return {};
+        // }
+        // // Vector to store matching rows
+        // std::vector<std::vector<std::string>> result;
+        // // loop through each row and apply the search condition
+        // for(const auto& row : rows){
+        //     bool conditionMet = false;
+        //     try {
+        //         // Convert values to double for numeric comparison
+        //         double rowValue = std::stod(row[searchIndex]);
+        //         double searchValue = std::stod(value);
+        //         if (op == "==") conditionMet = (rowValue == searchValue);
+        //         else if (op == "!=") conditionMet = (rowValue != searchValue);
+        //         else if (op == "<") conditionMet = (rowValue < searchValue);
+        //         else if (op == ">") conditionMet = (rowValue > searchValue);
+        //         else if (op == "<=") conditionMet = (rowValue <= searchValue);
+        //         else if (op == ">=") conditionMet = (rowValue >= searchValue);
+        //     } catch (const std::invalid_argument&) {
+        //         // Handle string comparison if values are non-numeric
+        //         if (op == "==") conditionMet = (row[searchIndex] == value);
+        //         else if (op == "!=") conditionMet = (row[searchIndex] != value);
+        //     }
+        //     // If the condition is met, add the row to the result
+        //     if (conditionMet) {
+        //         result.push_back(row);
+        //     }
+        // }
+        // return result;
+    // }
 
-        // Find the index of the search column
-        size_t searchIndex = -1;
+    bool evaluateCondition(const Condition& condition, const std::vector<std::string>& row, const std::vector<std::string>& columns) {
+        // Find the index of the condition column
+        size_t columnIndex = -1;
         for (size_t i = 0; i < columns.size(); i++) {
-            if (columns[i] == searchColumn) {
-                searchIndex = i;
+            if (columns[i] == condition.column) {
+                columnIndex = i;
                 break;
             }
         }
 
-        if (searchIndex == -1) {
-            std::cout << "Error: Column '" << searchColumn << "' not found." << std::endl;
-            return {};
+        // If the column is not found, return false
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << condition.column << "' not found." << std::endl;
+            return false;
         }
 
-        // Vector to store matching rows
+        // Extract the row value to compare
+        const std::string& rowValue = row[columnIndex];
+        bool conditionMet = false;
+
+        // Handle numeric and string comparisons
+        try {
+            double rowValueNumeric = std::stod(rowValue); // Try converting to double for numeric comparison
+            double conditionValueNumeric = std::stod(condition.value); // Convert the condition value to double
+
+            // Perform numeric comparisons based on the operator
+            if (condition.op == "==") conditionMet = (rowValueNumeric == conditionValueNumeric);
+            else if (condition.op == "!=") conditionMet = (rowValueNumeric != conditionValueNumeric);
+            else if (condition.op == "<") conditionMet = (rowValueNumeric < conditionValueNumeric);
+            else if (condition.op == ">") conditionMet = (rowValueNumeric > conditionValueNumeric);
+            else if (condition.op == "<=") conditionMet = (rowValueNumeric <= conditionValueNumeric);
+            else if (condition.op == ">=") conditionMet = (rowValueNumeric >= conditionValueNumeric);
+        } catch (const std::invalid_argument&) {
+            // If conversion fails, assume it's a string comparison
+            if (condition.op == "==") conditionMet = (rowValue == condition.value);
+            else if (condition.op == "!=") conditionMet = (rowValue != condition.value);
+        }
+
+        return conditionMet;
+    }
+
+
+    bool evaluateConditionGroup(const ConditionGroup& group, const std::vector<std::string>& row, const std::vector<std::string>& columns) {
+        bool groupResult = (group.logicalOp == "AND");
+
+        // Evaluate each condition in the group
+        for (const auto& condition : group.conditions) {
+            bool conditionMet = evaluateCondition(condition, row, columns);
+
+            // Apply logical operator
+            if (group.logicalOp == "AND") {
+                groupResult = groupResult && conditionMet;
+                if (!groupResult) break; // Short-circuit for AND
+            } else if (group.logicalOp == "OR") {
+                groupResult = groupResult || conditionMet;
+                if (groupResult) break; // Short-circuit for OR
+            }
+        }
+
+        // Evaluate each subgroup
+        for (const auto& subgroup : group.subgroups) {
+            bool subgroupResult = evaluateConditionGroup(subgroup, row, columns);
+
+            // Apply logical operator between groups
+            if (group.logicalOp == "AND") {
+                groupResult = groupResult && subgroupResult;
+                if (!groupResult) break;
+            } else if (group.logicalOp == "OR") {
+                groupResult = groupResult || subgroupResult;
+                if (groupResult) break;
+            }
+        }
+
+        return groupResult;
+    }
+
+    std::vector<std::vector<std::string>> searchRowMultiple(const ConditionGroup& group) {
+        std::lock_guard<std::mutex> lock(tableMutex);  // Lock for concurrency
+
         std::vector<std::vector<std::string>> result;
 
-        // loop through each row and apply the search condition
-        for(const auto& row : rows){
-            bool conditionMet = false;
-            try {
-                // Convert values to double for numeric comparison
-                double rowValue = std::stod(row[searchIndex]);
-                double searchValue = std::stod(value);
-
-                if (op == "==") conditionMet = (rowValue == searchValue);
-                else if (op == "!=") conditionMet = (rowValue != searchValue);
-                else if (op == "<") conditionMet = (rowValue < searchValue);
-                else if (op == ">") conditionMet = (rowValue > searchValue);
-                else if (op == "<=") conditionMet = (rowValue <= searchValue);
-                else if (op == ">=") conditionMet = (rowValue >= searchValue);
-            } catch (const std::invalid_argument&) {
-                // Handle string comparison if values are non-numeric
-                if (op == "==") conditionMet = (row[searchIndex] == value);
-                else if (op == "!=") conditionMet = (row[searchIndex] != value);
-            }
-
-            // If the condition is met, add the row to the result
-            if (conditionMet) {
+        for (const auto& row : rows) {
+            if (evaluateConditionGroup(group, row, columns)) {
                 result.push_back(row);
             }
         }
 
         return result;
+    }
+
+    // search with indexing
+    std::vector<std::vector<std::string>> searchRows(const std::vector<Condition>& conditions, const std::string& logicalOp = "AND") {
+        std::lock_guard<std::mutex> lock(tableMutex);
+
+        // Vector to store matching rows
+        std::vector<std::vector<std::string>> result;
+        
+        // Check for index-based optimization
+        for (const auto& condition : conditions) {
+            // Look for an index on the condition's column
+            auto indexIt = std::find_if(indexes.begin(), indexes.end(),
+                [&condition](const Index& idx) { return idx.column == condition.column; });
+
+            if (indexIt != indexes.end() && condition.op == "==") {
+                // Use index for equality-based searches
+                auto indexedRows = indexIt->indexMap.find(condition.value);
+                if (indexedRows != indexIt->indexMap.end()) {
+                    for (const auto& rowIdx : indexedRows->second) {
+                        result.push_back(rows[rowIdx]);
+                    }
+                }
+                return result;
+            }
+        }
+
+        // Fall back to regular multi-condition filtering if no index is found or conditions are more complex
+        // (use existing code for multi-condition filtering here)
+
+        return result;
+    }
+
+   void createIndex(const std::string& columnName) {
+        Index newIndex;
+        newIndex.column = columnName;
+
+        // Find the index of the column to be indexed
+        size_t columnIndex = -1;
+        for (size_t i = 0; i < columns.size(); i++) {
+            if (columns[i] == columnName) {
+                columnIndex = i;
+                break;
+            }
+        }
+        
+        if (columnIndex == -1) {
+            std::cout << "Error: Column '" << columnName << "' not found." << std::endl;
+            return;
+        }
+
+        // Populate the index map with column values and row indices
+        for (size_t rowIdx = 0; rowIdx < rows.size(); ++rowIdx) {
+            std::string key = rows[rowIdx][columnIndex];
+            newIndex.indexMap[key].push_back(rowIdx);
+        }
+
+        // Add newIndex to the list of indexes
+        indexes.push_back(newIndex);
+        std::cout << "Index created on column: " << columnName << std::endl;
+    }
+
+    bool isValidDataType(const std::string& value, DataType type){
+        try
+        {
+            if(type == DataType::INTEGER){
+                std::stoi(value); // check if value can converted to an interger
+            } else if (type == DataType::DATE){
+                // Check if value matches date format (e.g., YYYY-MM-DD)
+                std::regex datePattern("\\d{4}-\\d{2}-\\d{2}");
+                return std::regex_match(value, datePattern);
+            }
+        }
+        catch(...)
+        {
+            return false;
+        }
+        return true;
+        
+    }
+
+   // transaction methods
+    void beginTransaction(){
+        transactions.emplace_back();
+        std::cout << "Transaction started." << std::endl;
+    };
+
+    void commitTransaction() {
+        if (transactions.empty()){
+            std::cout << "No active transaction to commit." << std::endl;
+            return;
+        }
+
+        Transaction& txn = transactions.back();
+
+        // Apply inserts
+        for(const auto& row : txn.inserts){
+            rows.push_back(row);
+        }
+
+        // Apply udpates
+        for(const auto& [index, newData] : txn.updates) {
+            rows[index] = newData;
+        }
+
+        // Apply deleted
+        for(auto it = txn.deletes.rbegin(); it != txn.deletes.rend(); ++it){
+            rows.erase(rows.begin() + *it);
+        }
+
+         transactions.pop_back();
+        std::cout << "Transaction committed." << std::endl;
+    }
+
+    void rollbackTransaction() {
+        if (transactions.empty()) {
+            std::cout << "No active transaction to rollback." << std::endl;
+            return;
+        }
+
+        transactions.back().clear();
+        transactions.pop_back();
+        std::cout << "Transaction rolled back." << std::endl;
+    }
+
+    void addRowTransaction(const std::vector<std::string>& row){
+        if(transactions.empty()){
+            std::cout<< "Error: No active transaction. Use addRow for non-transactional insert." << std::endl;
+            return;
+        }
+        transactions.back().inserts.push_back(row);
+    }
+
+    void updateRowTransaction(size_t rowIndex, const std::vector<std::string>& newData){
+        if (transactions.empty()) {
+            std::cout << "Error: No active transaction. Use updateRow for non-transactional update." << std::endl;
+            return;
+        }
+        if (rowIndex >= rows.size()) {
+            std::cout << "Error: Row index out of range." << std::endl;
+            return;
+        }
+        transactions.back().updates.emplace_back(rowIndex, newData);
+    }
+
+    void deleteRowTransaction(size_t rowIndex) {
+        if (transactions.empty()) {
+            std::cout << "Error: No active transaction. Use deleteRow for non-transactional delete." << std::endl;
+            return;
+        }
+        if (rowIndex >= rows.size()) {
+            std::cout << "Error: Row index out of range." << std::endl;
+            return;
+        }
+        transactions.back().deletes.push_back(rowIndex);
+    }
+
+    bool evaluateConditionNested(const Condition& condition, const std::vector<std::string>& row, const std::vector<std::string>& columns) {
+        if (condition.isGroup) {
+            bool groupResult = (condition.logicalOp == "AND");
+            for (const auto& subcondition : condition.subconditions) {
+                bool subResult = evaluateConditionNested(subcondition, row, columns);
+
+                if (condition.logicalOp == "AND") {
+                    groupResult = groupResult && subResult;
+                    if (!groupResult) break;  // Short-circuit for AND
+                } else if (condition.logicalOp == "OR") {
+                    groupResult = groupResult || subResult;
+                    if (groupResult) break;  // Short-circuit for OR
+                }
+            }
+            return groupResult;
+        } else {
+            // Simple condition evaluation
+            auto it = std::find(columns.begin(), columns.end(), condition.column);
+            if (it == columns.end()) {
+                std::cerr << "Error: Column '" << condition.column << "' not found." << std::endl;
+                return false;
+            }
+            size_t columnIndex = std::distance(columns.begin(), it);
+            const std::string& cell = row[columnIndex];
+
+            try {
+                double cellValue = std::stod(cell);
+                double conditionValue = std::stod(condition.value);
+
+                if (condition.op == "==") return cellValue == conditionValue;
+                if (condition.op == "!=") return cellValue != conditionValue;
+                if (condition.op == "<") return cellValue < conditionValue;
+                if (condition.op == ">") return cellValue > conditionValue;
+                if (condition.op == "<=") return cellValue <= conditionValue;
+                if (condition.op == ">=") return cellValue >= conditionValue;
+            } catch (const std::invalid_argument&) {
+                // String comparison
+                if (condition.op == "==") return cell == condition.value;
+                if (condition.op == "!=") return cell != condition.value;
+            }
+        }
+        return false;
+    }
+
+    std::vector<std::vector<std::string>> searchRowsCondition(const Condition& condition) {
+        std::vector<std::vector<std::string>> result;
+        for (const auto& row : rows) {
+            if (evaluateConditionNested(condition, row, columns)) {
+                result.push_back(row);
+            }
+        }
+        return result;
+    }
+    
+    std::vector<std::vector<std::string>> searchRowsConditionAndOrder(const Condition& condition, const std::vector<OrderBy>& orderByColumns) {
+        std::vector<std::vector<std::string>> filteredRows;
+        for (const auto& row : rows) {
+            if (evaluateConditionNested(condition, row, columns)) {
+                filteredRows.push_back(row);
+            }
+        }
+
+         // Step 2: Sort rows based on orderByColumns
+        std::sort(filteredRows.begin(), filteredRows.end(), 
+            [&](const std::vector<std::string>& a, const std::vector<std::string>& b) {
+                for (const auto& order : orderByColumns) {
+                    auto it = std::find(columns.begin(), columns.end(), order.column);
+                    if (it == columns.end()) throw std::runtime_error("Invalid column: " + order.column);
+
+                    size_t colIndex = std::distance(columns.begin(), it);
+
+                    if (a[colIndex] != b[colIndex]) { // Compare values
+                        if (order.ascending) return a[colIndex] < b[colIndex];
+                        else return a[colIndex] > b[colIndex];
+                    }
+                }
+                return false; // Rows are equal
+            }
+        );
+
+        return filteredRows;
     }
 };
 
@@ -946,51 +1315,235 @@ public:
 int main() {
 
     // define columns
-    std::vector<std::string> columns = {"ID", "Name", "Age"};
+    std::vector<std::string> columns = {"ID", "Name", "Age", "EnrollmentDate"};
+    std::vector<DataType> studentTypes = {DataType::INTEGER, DataType::STRING, DataType::INTEGER, DataType::DATE};
 
     // Create a Table object
-    Table studentTable("Students", columns);
+    Table studentTable("Students", columns, studentTypes);
 
     // Add some rows
-    studentTable.addRow({"1", "Alice", "20"});
-    studentTable.addRow({"2", "Bob", "22"});
-    studentTable.addRow({"3", "Charlie", "19"});
-    studentTable.addRow({"4", "Dave", "25"});
-    studentTable.addRow({"5", "Eve", "invalid"});  
+    // studentTable.addRow({"1", "Alice", "20", "2023-09-01"});
+    // studentTable.addRow({"2", "Bob", "22", "2023-09-01"});
+    // studentTable.addRow({"3", "Charlie", "19", "2023-09-01"});
+    // studentTable.addRow({"4", "Dave", "25", "2023-09-01"});
+    // studentTable.addRow({"5", "Eve", "26", "2023-09-01"});  
 
-    // Save the table to a file
-    studentTable.saveToFile("studentTable.txt");
+    // // Save the table to a file
+    // studentTable.saveToFile("studentTable.txt");
 
-    // Clear the table data
-    Table newStudentTable("Students", columns);
+    // // Clear the table data
+    // Table newStudentTable("Students", columns, studentTypes);
 
-    // Load data from the file
-    newStudentTable.loadFromFile("studentTable.txt");
+    // // Load data from the file
+    // newStudentTable.loadFromFile("studentTable.txt");
 
-    // Display the table loaded from the file
-    std::cout << "Initial table:" << std::endl;
-    newStudentTable.displayTable();
+    // // Display the table loaded from the file
+    // std::cout << "Initial table:" << std::endl;
+    // newStudentTable.displayTable();
 
-    // search by rows select .... where start
+    // tras nstart
+    // Start transaction
+    studentTable.beginTransaction();
+
+    // Transactional add, update, and delete
+    studentTable.addRowTransaction({"1", "sushil", "20", "2023-09-01"});
+    studentTable.addRowTransaction({"2", "kriti", "22", "2023-09-01"});
+    studentTable.addRowTransaction({"3", "Charlie", "19", "2023-09-01"});
+    studentTable.addRowTransaction({"4", "Dave", "25", "2023-09-01"});
+    studentTable.addRowTransaction({"5", "Eve", "26", "2023-09-01"});
+    studentTable.addRowTransaction({"6", "Alice", "20", "2023-09-01"});
+    studentTable.addRowTransaction({"7", "Bob", "22", "2023-09-01"});
+    // studentTable.updateRowTransaction(0, {"1", "gupta", "21", "2023-09-01"});
+    // studentTable.deleteRowTransaction(1);
+
+    // Commit transaction
+    studentTable.commitTransaction();
+
+    // Display final table state
+    std::cout << "\nTable after committing transaction:" << std::endl;
+    studentTable.displayTable();
+    // trasn end
+
+    // search nested condtion  and order start
+     // Define condition
+    Condition condition;
+    condition.isGroup = false;
+    condition.column = "Age";
+    condition.op = ">";
+    condition.value = "20";
+
+    // Define sorting
+    std::vector<OrderBy> orderByColumns = {
+        {"Age", true},   // Sort by Age in ascending order
+        {"Name", false}  // If Age is equal, sort by Name in descending order
+    };
+
+    // Search and sort
+    auto result = studentTable.searchRowsConditionAndOrder(condition, orderByColumns);
+
+    std::cout << "\nResult after condition:" << std::endl;
+    // Print result
+    for (const auto& row : result) {
+        for (const auto& cell : row) {
+            std::cout << cell << "\t";
+        }
+        std::cout << std::endl;
+    }
+    // search nested condtion  and order end
+
+
+    // search nested condtion start
+    // Condition condition;
+    // condition.isGroup = true;
+    // condition.logicalOp = "OR";
+
+    // Condition subCondition1;
+    // subCondition1.isGroup = true;
+    // subCondition1.logicalOp = "AND";
+
+    // // Create and add first subcondition
+    // Condition ageCondition;
+    // ageCondition.column = "Age";
+    // ageCondition.op = "==";
+    // ageCondition.value = "20";
+    // subCondition1.subconditions.push_back(ageCondition);
+
+    // // Create and add second subcondition
+    // Condition nameCondition;
+    // nameCondition.column = "Name";
+    // nameCondition.op = "==";
+    // nameCondition.value = "Alice";
+    // subCondition1.subconditions.push_back(nameCondition);
+
+    // // Add subCondition1 to main condition
+    // condition.subconditions.push_back(subCondition1);
+
+    // // Create and add subCondition2 to main condition
+    // Condition subCondition2;
+    // subCondition2.isGroup = false;
+    // subCondition2.column = "Age";
+    // subCondition2.op = ">";
+    // subCondition2.value = "20";
+    // condition.subconditions.push_back(subCondition2);
+
+    // // Search rows with the nested condition
+    // std::cout << "\nRows matching the nested condition:" << std::endl;
+    // auto result = studentTable.searchRowsCondition(condition);
+    // for (const auto& row : result) {
+    //     for (const auto& cell : row) {
+    //         std::cout << cell << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    // search nested condtion end
+
+    // datatype start
+    // Add valid and invalid rows
+    // std::cout << "Adding valid row (ID=10, Name=John, Age=20, EnrollmentDate=2023-09-01):" << std::endl;
+    // newStudentTable.addRow({"10", "John", "20", "2023-09-01"});
+    // std::cout << "After New one Data table:" << std::endl;
+    // newStudentTable.displayTable();
+    // std::cout << "\nAdding invalid row (ID=abc, Name=Bob, Age=twenty, EnrollmentDate=2023-09-01):" << std::endl;
+    // newStudentTable.addRow({"abc", "Jane", "twenty", "2023-09-01"});
+    // std::cout << "After New two Data table:" << std::endl;
+    // newStudentTable.displayTable();
+    // datatype end
+
+    // index start
+    // Create an index on the "Age" column
+    // studentTable.createIndex("Age");
+
+    // Test search with index
+    // std::cout << "\nSearching rows where Age == 20 (using index):" << std::endl;
+    // std::vector<Condition> conditions = {{"Age", "==", "20"}};
+    // auto result = studentTable.searchRows(conditions);
+
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    // index end
+
+    // multiple condition group start
+    // Define nested condition group
+    // ConditionGroup group;
+    // group.logicalOp = "OR";
+
+    // ConditionGroup ageAndNameGroup;
+    // ageAndNameGroup.logicalOp = "AND";
+    // ageAndNameGroup.conditions = {{"Age", ">", "20"}, {"Name", "==", "Alice"}};
+
+    // ConditionGroup ageOrNotNameGroup;
+    // ageOrNotNameGroup.logicalOp = "AND";
+    // ageOrNotNameGroup.conditions = {{"Age", "<", "18"}};
+    // ageOrNotNameGroup.subgroups.push_back({{{"Name", "!=", "Charlie"}}, "AND"});
+
+    // group.subgroups.push_back(ageAndNameGroup);
+    // group.subgroups.push_back(ageOrNotNameGroup);
+
+    // auto result = studentTable.searchRowMultiple(group);
+    // // Output result for verification
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    // multiple condition group end
+
+    // search by rows select .... where start multiple single condition
+    // Test Case 1: Search rows where Age == "20" AND Name == "Alice"
+    // std::cout << "\nSearching rows where Age == 20 AND Name == Alice:" << std::endl;
+    // std::vector<Condition> conditions1 = {
+    //     {"Age", "==", "20"},
+    //     {"Name", "==", "Alice"}
+    // };
+    // std::vector<std::vector<std::string>> result = studentTable.searchRowMultiple(conditions1, "AND");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    // // Test Case 2: Search rows where Age == "20" OR Name == "Charlie"
+    // std::cout << "\nSearching rows where Age == 20 OR Name == Charlie:" << std::endl;
+    // std::vector<Condition> conditions2 = {
+    //     {"Age", "==", "20"},
+    //     {"Name", "==", "Charlie"}
+    // };
+    // result = studentTable.searchRowMultiple(conditions2, "OR");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    // search by rows select .... where start multiple single condition
+
+    // search by rows select .... where start single condition
     // Test Case 1: Search rows where Age == "20"
-    std::cout << "\nSearching rows where Age == 20:" << std::endl;
-    std::vector<std::vector<std::string>> result = studentTable.searchRows("Age", "==", "20");
-    for (const auto& row : result) {
-        for (const auto& data : row) {
-            std::cout << data << "\t";
-        }
-        std::cout << std::endl;
-    }
+    // std::cout << "\nSearching rows where Age == 20:" << std::endl;
+    // std::vector<std::vector<std::string>> result = studentTable.searchRows("Age", "==", "20");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
 
-    // Test Case 2: Search rows where Name != "Alice"
-    std::cout << "\nSearching rows where Name != 'Alice':" << std::endl;
-    result = studentTable.searchRows("Name", "!=", "Alice");
-    for (const auto& row : result) {
-        for (const auto& data : row) {
-            std::cout << data << "\t";
-        }
-        std::cout << std::endl;
-    }
+    // // Test Case 2: Search rows where Name != "Alice"
+    // std::cout << "\nSearching rows where Name != 'Alice':" << std::endl;
+    // result = studentTable.searchRows("Name", "!=", "Alice");
+    // for (const auto& row : result) {
+    //     for (const auto& data : row) {
+    //         std::cout << data << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
     // search by rows select .... where end
 
     // import from csv start

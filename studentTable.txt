@@ -1,7 +1,9 @@
 Students
-ID	Name	Age	
-1	Alice	20	
-2	Bob	22	
-3	Charlie	19	
-4	Dave	25	
-5	Eve	invalid	
+ID	Name	Age	EnrollmentDate	
+1	sushil	20	2023-09-01	
+2	kriti	22	2023-09-01	
+3	Charlie	19	2023-09-01	
+4	Dave	25	2023-09-01	
+5	Eve	26	2023-09-01	
+6	Alice	20	2023-09-01	
+7	Bob	22	2023-09-01	
