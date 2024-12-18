@@ -1,9 +1,9 @@
 Students
-ID	Name	Age	EnrollmentDate	
-1	sushil	20	2023-09-01	
-2	kriti	22	2023-09-01	
-3	Charlie	19	2023-09-01	
-4	Dave	25	2023-09-01	
-5	Eve	26	2023-09-01	
-6	Alice	20	2023-09-01	
-7	Bob	22	2023-09-01	
+ID	Name	Age	EnrollmentDate	Score	
+1	sushil	20	2023-09-01	85.5	
+2	kriti	22	2023-09-01	90.0	
+3	Charlie	19	2023-09-01	78.0	
+4	Dave	25	2023-09-01	88.5	
+5	Eve	26	2023-09-01	86.0	
+6	Alice	20	2023-09-01	93.0	
+7	Bob	22	2023-09-01	78.3	

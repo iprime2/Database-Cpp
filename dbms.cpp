@@ -74,9 +74,9 @@ public:
 class Table {
 private:
     std::string tableName;
+    std::vector<std::vector<std::string>> rows;
     std::vector<std::string> columns;
     std::vector<DataType> columnTypes; // store data type of each column
-    std::vector<std::vector<std::string>> rows;
 
     std::unordered_map<std::string, size_t> index;
     // Multi-column index for faster querying based on multiple columns
@@ -90,7 +90,10 @@ private:
     std::vector<Transaction> transactions; 
 
 public:
-    //constructor
+
+    // Default Constructor
+    // Table() = default;
+
     Table(const std::string& name, const std::vector<std::string>& colNames, const std::vector<DataType>& colTypes): tableName(name), columns(colNames), columnTypes(colTypes) {
         std::cout << "Table '" << tableName << "' created with columns: ";
         for (const auto& col : columns) {
@@ -99,6 +102,39 @@ public:
         std::cout << std::endl;
     }
 
+
+    // Table joinTables(const Table& other, const std::string& joinColumn) const {
+    //     // Find the column index in both tables
+    //     auto it1 = std::find(columns.begin(), columns.end(), joinColumn);
+    //     auto it2 = std::find(other.columns.begin(), other.columns.end(), joinColumn);
+
+    //     if(it1 == columns.end() || it2 == other.columns.end()){
+    //         throw std::runtime_error("Join column not found in one or both tables.");
+    //     }
+
+    //     size_t index1 = std::distance(columns.begin(), it1);
+    //     size_t index2 = std::distance(other.columns.begin(), it2);
+
+    //     // create result Table
+    //     Table result;
+    //     result.columns = columns;
+    //     result.columns.insert(result.columns.end(),
+    //                         other.columns.begin(),
+    //                         other.columns.end());
+
+    //     // Perform the join 
+    //     for(const auto& row1 : rows){
+    //         for(const auto& row2 : other.rows){
+    //             if(row1[index1] == row1[index2]){
+    //                 std::vector<std::string> combinedRow = row1;
+    //                 combinedRow.insert(combinedRow.end(), row2.begin(), row2.end());
+    //                 result.rows.push_back(combinedRow);
+    //             }
+    //         }
+    //     }
+
+    //     return result;
+    // }
 
     // Add a row of data
     void addRow(std::vector<std::string> rowData) {
@@ -1309,14 +1345,112 @@ public:
 
         return filteredRows;
     }
+
+    double aggregate(const std::string& columnName, const std::string& function) const {
+        //Find column index
+        auto it = std::find(columns.begin(), columns.end(), columnName);
+        if(it == columns.end()){
+            throw std::runtime_error("Column '" + columnName + "' not found.");
+        }
+
+        size_t columnIndex  = std::distance(columns.begin(), it);
+
+        // Ensure column contains numeric 
+        std::vector<double> numericValues;
+        for(const auto& row : rows){
+            try
+            {
+                numericValues.push_back(std::stod(row[columnIndex]));
+            }
+            catch(const std::invalid_argument)
+            {
+                continue;
+            }
+        }
+
+        if(numericValues.empty()){
+            throw std::runtime_error("No numeric values found in column '" + columnName + "'.");
+        }
+
+        // Compute aggregate
+        if (function == "SUM") {
+            return std::accumulate(numericValues.begin(), numericValues.end(), 0.0);
+        } else if (function == "AVERAGE") {
+            return std::accumulate(numericValues.begin(), numericValues.end(), 0.0) / numericValues.size();
+        } else if (function == "MIN") {
+            return *std::min_element(numericValues.begin(), numericValues.end());
+        } else if (function == "MAX") {
+            return *std::max_element(numericValues.begin(), numericValues.end());
+        } else {
+            throw std::runtime_error("Unsupported aggregate function: " + function);
+        }
+    }
+
+    std::vector<std::vector<std::string>> groupBy(const std::string& groupColumn, const std::string& aggColumn, const std::string& function) const {
+        // Find column indices
+        auto groupIt = std::find(columns.begin(), columns.end(), groupColumn);
+        auto aggIt = std::find(columns.begin(), columns.end(), aggColumn);
+
+        if (groupIt == columns.end()) {
+            throw std::runtime_error("Group column '" + groupColumn + "' not found.");
+        }
+        if (aggIt == columns.end()) {
+            throw std::runtime_error("Aggregate column '" + aggColumn + "' not found.");
+        }
+
+        size_t groupIndex = std::distance(columns.begin(), groupIt);
+        size_t aggIndex = std::distance(columns.begin(), aggIt);
+
+        // Group rows by group columns 
+        std::unordered_map<std::string, std::vector<std::vector<std::string>>> groups;
+        for(const auto& row : rows) {
+            groups[row[groupIndex]].push_back(row);
+        }
+
+        // Compute aggregate for each group
+        std::vector<std::vector<std::string>> result;
+        result.push_back({groupColumn, function + "(" + aggColumn + ")"});
+
+        for(const auto& [key, groupRows] : groups){
+            std::vector<double> numericValues;
+            for(const auto& row : groupRows) {
+                try
+                {
+                    numericValues.push_back(std::stod(row[aggIndex]));
+                }
+                catch(const std::invalid_argument)
+                {
+                    continue;
+                }
+            }
+
+            if (numericValues.empty()) continue;
+
+            double aggResult;
+            if (function == "SUM") {
+                aggResult = std::accumulate(numericValues.begin(), numericValues.end(), 0.0);
+            } else if (function == "AVERAGE") {
+                aggResult = std::accumulate(numericValues.begin(), numericValues.end(), 0.0) / numericValues.size();
+            } else if (function == "MIN") {
+                aggResult = *std::min_element(numericValues.begin(), numericValues.end());
+            } else if (function == "MAX") {
+                aggResult = *std::max_element(numericValues.begin(), numericValues.end());
+            } else {
+                throw std::runtime_error("Unsupported aggregate function: " + function);
+            }
+
+            result.push_back({key, std::to_string(aggResult)});
+        }
+        return result;
+    }
 };
 
 
 int main() {
 
     // define columns
-    std::vector<std::string> columns = {"ID", "Name", "Age", "EnrollmentDate"};
-    std::vector<DataType> studentTypes = {DataType::INTEGER, DataType::STRING, DataType::INTEGER, DataType::DATE};
+    std::vector<std::string> columns = {"ID", "Name", "Age", "EnrollmentDate", "Score"};
+    std::vector<DataType> studentTypes = {DataType::INTEGER, DataType::STRING, DataType::INTEGER, DataType::DATE, DataType::INTEGER};
 
     // Create a Table object
     Table studentTable("Students", columns, studentTypes);
@@ -1346,13 +1480,13 @@ int main() {
     studentTable.beginTransaction();
 
     // Transactional add, update, and delete
-    studentTable.addRowTransaction({"1", "sushil", "20", "2023-09-01"});
-    studentTable.addRowTransaction({"2", "kriti", "22", "2023-09-01"});
-    studentTable.addRowTransaction({"3", "Charlie", "19", "2023-09-01"});
-    studentTable.addRowTransaction({"4", "Dave", "25", "2023-09-01"});
-    studentTable.addRowTransaction({"5", "Eve", "26", "2023-09-01"});
-    studentTable.addRowTransaction({"6", "Alice", "20", "2023-09-01"});
-    studentTable.addRowTransaction({"7", "Bob", "22", "2023-09-01"});
+    studentTable.addRowTransaction({"1", "sushil", "20", "2023-09-01", "85.5"});
+    studentTable.addRowTransaction({"2", "kriti", "22", "2023-09-01", "90.0"});
+    studentTable.addRowTransaction({"3", "Charlie", "19", "2023-09-01", "78.0"});
+    studentTable.addRowTransaction({"4", "Dave", "25", "2023-09-01", "88.5"});
+    studentTable.addRowTransaction({"5", "Eve", "26", "2023-09-01", "86.0"});
+    studentTable.addRowTransaction({"6", "Alice", "20", "2023-09-01", "93.0"});
+    studentTable.addRowTransaction({"7", "Bob", "22", "2023-09-01", "78.3"});
     // studentTable.updateRowTransaction(0, {"1", "gupta", "21", "2023-09-01"});
     // studentTable.deleteRowTransaction(1);
 
@@ -1364,31 +1498,93 @@ int main() {
     studentTable.displayTable();
     // trasn end
 
-    // search nested condtion  and order start
-     // Define condition
-    Condition condition;
-    condition.isGroup = false;
-    condition.column = "Age";
-    condition.op = ">";
-    condition.value = "20";
+    // groupby and agg start
+     try {
+        auto groupedResults = studentTable.groupBy("Age", "Score", "AVERAGE");
 
-    // Define sorting
-    std::vector<OrderBy> orderByColumns = {
-        {"Age", true},   // Sort by Age in ascending order
-        {"Name", false}  // If Age is equal, sort by Name in descending order
-    };
-
-    // Search and sort
-    auto result = studentTable.searchRowsConditionAndOrder(condition, orderByColumns);
-
-    std::cout << "\nResult after condition:" << std::endl;
-    // Print result
-    for (const auto& row : result) {
-        for (const auto& cell : row) {
-            std::cout << cell << "\t";
+        // Print grouped results
+        std::cout << "Group By Results:" << std::endl;
+        for (const auto& row : groupedResults) {
+            for (const auto& cell : row) {
+                std::cout << cell << "\t";
+            }
+            std::cout << std::endl;
         }
-        std::cout << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
     }
+    // groupby and agg end
+
+    // aggreration start
+
+    //  try {
+    //     std::cout << "Sum of Scores: " << studentTable.aggregate("Score", "SUM") << std::endl;
+    //     std::cout << "Average Age: " << studentTable.aggregate("Age", "AVERAGE") << std::endl;
+    //     std::cout << "Minimum Score: " << studentTable.aggregate("Score", "MIN") << std::endl;
+    //     std::cout << "Maximum Score: " << studentTable.aggregate("Score", "MAX") << std::endl;
+    // } catch (const std::exception& e) {
+    //     std::cerr << "Error: " << e.what() << std::endl;
+    // }
+
+    // aggreration end
+
+    // join table start
+    // std::vector<std::string> gradeColumns = {"ID", "Grade"};
+    // std::vector<DataType> gradeTypes = {DataType::INTEGER, DataType::STRING};
+    // Table gradeTable("Grades", gradeColumns, gradeTypes);
+
+    // gradeTable.beginTransaction();
+    // gradeTable.addRowTransaction({"1", "A"});
+    // gradeTable.addRowTransaction({"2", "C"});
+    // gradeTable.addRowTransaction({"3", "B"});
+    // gradeTable.addRowTransaction({"5", "E"});
+    // gradeTable.addRowTransaction({"7", "F"});
+
+    // gradeTable.commitTransaction();
+
+    // // Perform JOIN on the "ID" column
+    // Table result = studentTable.joinTables(gradeTable, "ID");
+
+    // // Print the result
+    // std::cout << "Joined Table:" << std::endl;
+    // for (const auto& col : result.columns) {
+    //     std::cout << col << "\t";
+    // }
+    // std::cout << std::endl;
+
+    // for (const auto& row : result.rows) {
+    //     for (const auto& cell : row) {
+    //         std::cout << cell << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    // join table end
+
+    // search nested condtion  and order start
+    // // Define condition
+    // Condition condition;
+    // condition.isGroup = false;
+    // condition.column = "Age";
+    // condition.op = ">";
+    // condition.value = "20";
+
+    // // Define sorting
+    // std::vector<OrderBy> orderByColumns = {
+    //     {"Age", true},   // Sort by Age in ascending order
+    //     {"Name", false}  // If Age is equal, sort by Name in descending order
+    // };
+
+    // // Search and sort
+    // auto result = studentTable.searchRowsConditionAndOrder(condition, orderByColumns);
+
+    // std::cout << "\nResult after condition:" << std::endl;
+    // // Print result
+    // for (const auto& row : result) {
+    //     for (const auto& cell : row) {
+    //         std::cout << cell << "\t";
+    //     }
+    //     std::cout << std::endl;
+    // }
     // search nested condtion  and order end
 
 
@@ -1808,22 +2004,22 @@ int main() {
 
     // // Define some operations to be executed concurrently
     // auto addOperation = [&]() { studentTable.addRow({"4", "Dave", "23"}); };
-    // auto updateOperation = [&]() { studentTable.updateRows("ID", "2", "Name", "Robert"); };
-    // auto deleteOperation = [&]() { studentTable.deleteRows("ID", "1"); };
+    // // auto updateOperation = [&]() { studentTable.updateRows("ID", "2", "Name", "Robert"); };
+    // // auto deleteOperation = [&]() { studentTable.deleteRows("ID", "1"); };
 
     // // Run the operations concurrently using threads
-    // std::thread thread1(addOperation);
-    // std::thread thread2(updateOperation);
-    // std::thread thread3(deleteOperation);
+    // // std::thread thread1(addOperation);
+    // // std::thread thread2(updateOperation);
+    // // std::thread thread3(deleteOperation);
 
     // // Wait for all threads to finish
-    // thread1.join();
-    // thread2.join();
-    // thread3.join();
+    // // thread1.join();
+    // // thread2.join();
+    // // thread3.join();
 
     // // Display the table after concurrent operations
-    // std::cout << "Table after concurrent operations:" << std::endl;
-    // studentTable.displayTable();
+    // // std::cout << "Table after concurrent operations:" << std::endl;
+    // // studentTable.displayTable();
 
     // multi col index start
     // Query using the multi-column index (ID and Age)
